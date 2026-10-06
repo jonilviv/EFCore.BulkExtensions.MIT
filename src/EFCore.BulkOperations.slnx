@@ -1,0 +1,35 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="EFCore.BulkOperations.props" />
+  </Folder>
+  <Folder Name="/targets/">
+    <File Path="targets/MedallionTopologicalSort.targets" />
+    <File Path="targets/Microsoft.EntityFrameworkCore.Relational.targets" />
+    <File Path="targets/Microsoft.EntityFrameworkCore.SqlServer.HierarchyId.targets" />
+    <File Path="targets/Microsoft.EntityFrameworkCore.SqlServer.NetTopologySuite.targets" />
+    <File Path="targets/Microsoft.EntityFrameworkCore.Sqlite.Core.targets" />
+    <File Path="targets/NetTopologySuite.targets" />
+    <File Path="targets/NetTopologySuite.IO.SpatiaLite.targets" />
+    <File Path="targets/Npgsql.EntityFrameworkCore.PostgreSQL.targets" />
+    <File Path="targets/xunit.assemblyfixture.targets" />
+    <File Path="targets/Microsoft.Extensions.Configuration.Json.targets" />
+    <File Path="targets/Testcontainers.targets" />
+    <File Path="targets/Testcontainers.MsSql.targets" />
+    <File Path="targets/Testcontainers.PostgreSql.targets" />
+    <File Path="targets/Testcontainers.MySql.targets" />
+    <File Path="targets/RT.Comb.targets" />
+    <File Path="targets/Microsoft.NET.Test.Sdk.targets" />
+    <File Path="targets/xunit.runner.visualstudio.targets" />
+    <File Path="targets/coverlet.collector.targets" />
+    <File Path="targets/SQLitePCLRaw.bundle_e_sqlite3.targets" />
+    <File Path="targets/xunit.v3.targets" />
+  </Folder>
+  <Folder Name="/Providers/">
+    <Project Path="Providers/EFCore.BulkOperations.MySql/EFCore.BulkOperations.MySql.csproj" />
+    <Project Path="Providers/EFCore.BulkOperations.PostgreSql/EFCore.BulkOperations.PostgreSql.csproj" />
+    <Project Path="Providers/EFCore.BulkOperations.SQLite/EFCore.BulkOperations.SQLite.csproj" />
+    <Project Path="Providers/EFCore.BulkOperations.SqlServer/EFCore.BulkOperations.SqlServer.csproj" />
+  </Folder>
+  <Project Path="EFCore.BulkOperations/EFCore.BulkOperations.csproj" />
+  <Project Path="EFCore.BulkOperations.Tests/EFCore.BulkOperations.Tests.csproj" />
+</Solution>

@@ -1,31 +1,15 @@
-# EFCore.BulkExtensions.MIT
+# <img src="icon.png" width="40" height="40" alt="EFCore.BulkOperations" /> EFCore.BulkOperations
 
-## This is MIT fork of [EFCore.BulkExtensions](https://github.com/borisdj/EFCore.BulkExtensions).
-### Why?
-Original project changed its license to dual license (commercial and free only under certain conditions). This fork is distributed under MIT license.
-### When?
-I forked the project at commit [5bf938a422](https://github.com/borisdj/EFCore.BulkExtensions/tree/5bf938a422bf9f9cee2cdfa8c341559b391efec9) from _18.01.2023_. This is the last version with the MIT license.
-### Why choose this fork instead of original version?
-- You need MIT version (obviously).
-- You care about **SetOutputIdentity**. In this fork I fixed multiple bugs around setting output identity and added tests for it.
-- This fork fixes issues not fixed in original:
-  - [Fix Insert New Only](https://github.com/videokojot/EFCore.BulkExtensions.MIT/issues/45)
-  - [Fix Output Identity not set when column is null](https://github.com/videokojot/EFCore.BulkExtensions.MIT/issues/46)
-  - [Output Identity not set when db columns are not unique](https://github.com/videokojot/EFCore.BulkExtensions.MIT/issues/48)
-  - [entitiesWithOutputIdentity contains the ids rather than the entities](https://github.com/borisdj/EFCore.BulkExtensions/issues/1297)
-- Other improvements:
-  - [SQL Providers made Thread Safe](https://github.com/videokojot/EFCore.BulkExtensions.MIT/issues/49) 
-- Any fix is also automatically propagated to all major versions (v8/9/10). All major version receives new fixes.
-- You can easily match version to source code on GitHub (see [GitHub Releases](https://github.com/videokojot/EFCore.BulkExtensions.MIT/releases)).
-- You can see that all the test are passing in the released version (in GitHub Actions or run tests easily locally yourself (just Docker needed))
-### Why choose original version?
-- There might be some new features, missing here. But feel free to create feature request (or even better create PR yourself). 
-### What's changed?
-- Test are now run using **TestContainers**, hassle-free setup (only Docker needed). So any contribution should be very easy.
-- **Tests** are now run as part of release process (see GitHub Actions for yourself).
-- **Tests** are run against all versions, so no regressions should happen.
+High-performance Entity Framework Core Bulk and Batch Operations library for .NET 8 / .NET 10 (Insert, Update, Delete, Read, Upsert, Truncate, SaveChanges) supporting SQL Server, PostgreSQL, MySQL, and SQLite.
 
-# EFCore.BulkExtensions.MIT
+Distributed under the **MIT** license.
+
+## Highlights
+- **High Performance:** Native bulk copy mechanisms for maximum throughput.
+- **Modern Architecture:** Clean provider separation (`SqlServer`, `PostgreSql`, `MySql`, `SQLite`).
+- **Current LTS Support:** Targeting `.NET 8.0` and `.NET 10.0`.
+- **xUnit v3 & Testcontainers:** Comprehensive suite of unit and integration tests.
+- **Pure MIT License:** Free for commercial and open-source use without restrictive dual-licensing.
 EntityFrameworkCore extensions: <br>
 -Bulk operations **(Insert, Update, Delete, Read, Upsert, Sync, SaveChanges)**<br>
 -Batch ops (**Delete, Update**) and **Truncate**.<br>

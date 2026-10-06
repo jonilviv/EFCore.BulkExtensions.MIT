@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\..\EFCore.BulkOperations.props" />
+
+  <PropertyGroup>
+    <AssemblyName>EFCore.BulkOperations.SQLite</AssemblyName>
+    <PackageId>EFCore.BulkOperations.SQLite</PackageId>
+    <Title>EFCore.BulkOperations.SQLite</Title>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\EFCore.BulkOperations\EFCore.BulkOperations.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\icon.png" Pack="True" PackagePath="" />
+    <None Include="..\..\..\README.md" Pack="True" PackagePath="" />
+    <Content Include="..\..\..\LICENSE" Link="LICENSE" Pack="true" PackagePath="LICENSE" />
+  </ItemGroup>
+
+  <Import Project="..\..\targets\NetTopologySuite.IO.SpatiaLite.targets" />
+  <Import Project="..\..\targets\Microsoft.EntityFrameworkCore.Sqlite.Core.targets" />
+
+</Project>

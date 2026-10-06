@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Project>
+
+  <PropertyGroup>
+    <!-- Supporting only current LTS https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core -->
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>EFCore.BulkOperations</RootNamespace>
+    <Nullable>enable</Nullable>
+    <!--<LangVersion>latest</LangVersion>-->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NeutralLanguage>en</NeutralLanguage>
+    <NoWarn>$(NoWarn);CS1591;CA2255;NU1608;EF1001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package metadata">
+    <Version>12.0.0</Version>
+    <AssemblyVersion>12.0.0.0</AssemblyVersion>
+    <FileVersion>12.0.0.0</FileVersion>
+    <Authors>jonilviv, borisdj, Jindrich Cincibuch</Authors>
+    <Description>EntityFramework EF Core Bulk Batch Operations for Insert Update Delete Read (CRUD) operations on SQL Server, PostgreSQL, MySQL, SQLite</Description>
+    <PackageProjectUrl>https://github.com/jonilviv/EFCore.BulkOperations</PackageProjectUrl>
+    <PackageIcon>icon.png</PackageIcon>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>EntityFrameworkCore Entity Framework Core EFCore EF Core SQL Server PostgreSQL MySQL SQLite Bulk Batch Operations Insert Update Delete Read Truncate SaveChanges</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/jonilviv/EFCore.BulkOperations</RepositoryUrl>
+    <RepositoryType>Git</RepositoryType>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\dist</PackageOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <DebugType>full</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+    <EnvironmentName>Development</EnvironmentName>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+    <EnvironmentName>Production</EnvironmentName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
+    <Compile Remove="TestResults\**" />
+    <EmbeddedResource Remove="bin\**" />
+    <EmbeddedResource Remove="obj\**" />
+    <EmbeddedResource Remove="TestResults\**" />
+    <None Remove="bin\**" />
+    <None Remove="obj\**" />
+    <None Remove="TestResults\**" />
+  </ItemGroup>
+
+</Project>

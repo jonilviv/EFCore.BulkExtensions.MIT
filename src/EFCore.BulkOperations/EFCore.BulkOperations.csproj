@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\EFCore.BulkOperations.props" />
+
+  <PropertyGroup>
+    <AssemblyName>EFCore.BulkOperations</AssemblyName>
+    <PackageId>EFCore.BulkOperations</PackageId>
+    <Title>EFCore.BulkOperations</Title>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon.png" Pack="True" PackagePath="" />
+    <None Include="..\..\README.md" Pack="True" PackagePath="" />
+    <Content Include="..\..\LICENSE" Link="LICENSE" Pack="true" PackagePath="LICENSE" />
+  </ItemGroup>
+
+  <Import Project="..\targets\MedallionTopologicalSort.targets" />
+  <Import Project="..\targets\Microsoft.EntityFrameworkCore.Relational.targets" />
+
+</Project>
