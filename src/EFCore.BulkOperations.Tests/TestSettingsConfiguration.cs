@@ -3,11 +3,11 @@ using System;
 
 namespace EFCore.BulkOperations.Tests;
 
-internal static class TestSettingsConfiguration
+public static class TestSettingsConfiguration
 {
     private static readonly Lazy<IConfiguration> __settings = new(Build);
 
-    internal static IConfiguration Instance => __settings.Value;
+    public static IConfiguration Instance => __settings.Value;
 
     public static bool UseLocalDatabases =>
         string.Equals(Environment.GetEnvironmentVariable("EFCORE_BULK_EXTENSIONS_USE_LOCAL_DB"), "true", StringComparison.OrdinalIgnoreCase)

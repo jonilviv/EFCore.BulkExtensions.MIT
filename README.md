@@ -16,29 +16,33 @@ EntityFrameworkCore extensions: <br>
 Library is Lightweight and very Efficient, having all mostly used [CRUD](https://en.wikipedia.org/wiki/Create,_read,_update_and_delete) operation.<br>
 
 [//]: # (Was selected in top 20 [EF Core Extensions]&#40;https://docs.microsoft.com/en-us/ef/core/extensions/&#41; recommended by Microsoft.<br>)
-Latest version is using EF Core 8 and targeting .Net 8.<br>
-Supports all 4 major databases:<br>
--**SQLServer** (or SqlAzure) under the hood uses [SqlBulkCopy](https://msdn.microsoft.com/en-us/library/system.data.sqlclient.sqlbulkcopy.aspx) for Insert, Update/Delete = BulkInsert + raw Sql [MERGE](https://docs.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql).<br>
--**PostgreSQL** (9.5+) is using [COPY BINARY](https://www.postgresql.org/docs/9.2/sql-copy.html) combined with [ON CONFLICT](https://www.postgresql.org/docs/10/sql-insert.html#SQL-ON-CONFLICT) for Update (supported from v6+).<br>
--**MySQL** (8+) is using [MySqlBulkCopy](https://mysqlconnector.net/api/mysqlconnector/mysqlbulkcopytype/l) combined with [ON DUPLICATE](https://dev.mysql.com/doc/refman/8.0/en/insert-on-duplicate.html) for Update (Only Bulk ops supported from v6+).<br>
--**SQLite** has no Copy tool, instead library uses plain SQL combined with [UPSERT](https://www.sqlite.org/lang_UPSERT.html).<br>
-Bulk Tests can not have UseInMemoryDb because InMemoryProvider does not support Relational-specific methods.<br>
-Instead Test options are  SqlServer(Developer or Express), LocalDb([if alongside Developer v.](https://stackoverflow.com/questions/42885377/sql-server-2016-developer-version-can-not-connect-to-localdb-mssqllocaldb?noredirect=1&lq=1)), or for other adapters PostgreSQL/MySQL/SQLite.
+Latest version targets **.NET 8.0 (EF Core 8)** and **.NET 10.0 (EF Core 10)**.<br>
+Supports all 4 major relational databases:
+- **SQL Server** (or Azure SQL): uses [SqlBulkCopy](https://learn.microsoft.com/en-us/dotnet/api/microsoft.data.sqlclient.sqlbulkcopy) for Insert; Update/Delete via temporary staging table and raw SQL `MERGE`.
+- **PostgreSQL** (9.5+): uses [COPY BINARY](https://www.postgresql.org/docs/current/sql-copy.html) combined with `ON CONFLICT` for Update/Upsert.
+- **MySQL** (8+): uses [MySqlBulkCopy](https://mysqlconnector.net/api/mysqlconnector/mysqlbulkcopy/) (`LOAD DATA LOCAL INFILE`) combined with `ON DUPLICATE KEY UPDATE`.
+- **SQLite**: uses optimized multi-row parameterized `INSERT` statements with `UPSERT` (`ON CONFLICT DO UPDATE`).
 
-<!--[![Button](https://img.shields.io/nuget/v/EFCore.BulkExtensions.svg)](https://www.nuget.org/packages/EFCore.BulkExtensions.MIT/)-->
-Available on <a href="https://www.nuget.org/packages/EFCore.BulkExtensions.MIT/"><img src="https://buildstats.info/nuget/EFCore.BulkExtensions.MIT" /></a><br>
-That is main nuget for all Databases, there are also specific ones with single provider for those who need small packages.<br>
-Package manager console command for installation: *Install-Package EFCore.BulkExtensions*<br>
-Its assembly is [Strong-Named](https://docs.microsoft.com/en-us/dotnet/standard/library-guidance/strong-naming) and [Signed](https://github.com/borisdj/EFCore.BulkExtensions/issues/161) with a key.
-| Nuget | Target          | Used EF v.  | For projects targeting          |
-| ----- | --------------- | ----------- | ------------------------------- |
-| 8.x   | Net 8.0         | EF Core 8.0 | Net 8.0+                        |
-| 7.x   | Net 6.0         | EF Core 7.0 | Net 7.0+                        |
-| 6.x   | Net 6.0         | EF Core 6.0 | Net 6.0+                        |
-| 5.x   | N/A             | N/A         | N/A                             |
-| 3.x   | N/A             | N/A         | N/A                             |
+### Modern Modular Architecture
+The solution is organized into core engine abstractions and standalone database provider libraries:
+- `EFCore.BulkOperations` - core engine, API extensions, orchestration and transaction management.
+- `EFCore.BulkOperations.SqlServer` - SQL Server provider implementation.
+- `EFCore.BulkOperations.PostgreSql` - PostgreSQL provider implementation.
+- `EFCore.BulkOperations.MySql` - MySQL provider implementation.
+- `EFCore.BulkOperations.SQLite` - SQLite provider implementation.
 
-Prior versions (5 and lower) are no longer actively maintained.
+### Isolated Docker Integration Tests & Benchmarks
+Each database provider has a dedicated integration test project using **Testcontainers** to automatically spawn clean Docker containers with disposable dynamic ports (or isolated files for SQLite):
+- `EFCore.BulkOperations.SqlServer.IntegrationTests` (`mcr.microsoft.com/mssql/server:2022-latest`)
+- `EFCore.BulkOperations.PostgreSql.IntegrationTests` (`postgres:16`)
+- `EFCore.BulkOperations.MySql.IntegrationTests` (`mysql:latest`)
+- `EFCore.BulkOperations.SQLite.IntegrationTests` (isolated file database)
+- `EFCore.BulkOperations.Tests` - shared test harness containing synthetic dataset generator (1,000,000 records), benchmark execution engine, and automated markdown report generator.
+
+| Nuget | Target Frameworks | EF Core Version | Support Status |
+| :--- | :--- | :--- | :--- |
+| **10.x** | `net10.0`, `net8.0` | EF Core 10.0 / 8.0 | Active (Current LTS) |
+| **8.x** | `net8.0` | EF Core 8.0 | Active (LTS) |
 
 ## Contributing
 
@@ -64,7 +68,7 @@ context.BulkInsertOrUpdateOrDelete(entities); context.BulkInsertOrUpdateOrDelete
 context.BulkUpdate(entities);                 context.BulkUpdateAsync(entities);
 context.BulkDelete(entities);                 context.BulkDeleteAsync(entities);
 context.BulkRead(entities);                   context.BulkReadAsync(entities);
-context.BulkSaveChanges();                    context.BulkSaveChangesAsync();                    // >= v6
+context.BulkSaveChanges();                    context.BulkSaveChangesAsync();
 ```
 
 **-SQLite** requires package: [*SQLitePCLRaw.bundle_e_sqlite3*](https://docs.microsoft.com/en-us/dotnet/standard/data/sqlite/custom-versions?tabs=netcore-cli) with call to `SQLitePCL.Batteries.Init()`<br>
@@ -100,19 +104,20 @@ do {
 context.Truncate<Entity>();
 context.TruncateAsync<Entity>();
 ```
-
 ## Performances
-Following are performances (in seconds)
-* For SQL Server (v. 2019):
+Measured against **1,000,000 synthetic records** dataset. Full per-second and throughput metrics logged to [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md).
 
-| Ops\Rows | EF 100K | Bulk 100K | EF 1 MIL.| Bulk 1 MIL.|
-| -------- | ------: | --------: | -------: | ---------: |
-| Insert   |  11 s   | 3 s       |   60 s   | 15  s      |
-| Update   |   8 s   | 4 s       |   84 s   | 27  s      |
-| Delete   |  50 s   | 3 s       | 5340 s   | 15  s      |
+| Database | Mode | Records | │ | Classic Insert | Bulk Insert | Speedup | │ | Classic Update | Bulk Update | Speedup | │ | Classic Delete | Bulk Delete | Speedup | │ | Overall Speedup |
+| :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- |
+| **SQLite** | Sync | 1,000,000 | │ | 20.0s | 3.9s | **5.1x** | │ | 26.7s | 4.7s | **5.7x** | │ | 15.1s | 1.6s | **9.3x** | │ | **5.8x** |
+| **SQLite** | Async | 1,000,000 | │ | 20.1s | 3.4s | **6.0x** | │ | 22.8s | 3.9s | **5.8x** | │ | 13.8s | 1.3s | **10.6x** | │ | **6.5x** |
+| **PostgreSQL** | Sync | 1,000,000 | │ | 34.4s | 11.3s | **3.0x** | │ | 44.2s | 15.3s | **2.9x** | │ | 27.6s | 8.9s | **3.1x** | │ | **3.0x** |
+| **PostgreSQL** | Async | 1,000,000 | │ | 35.2s | 12.1s | **2.9x** | │ | 45.1s | 16.0s | **2.8x** | │ | 28.1s | 9.4s | **3.0x** | │ | **2.9x** |
+| **MySQL** | Sync | 1,000,000 | │ | 63.5s | 10.4s | **6.1x** | │ | 144.3s | 21.3s | **6.8x** | │ | 74.8s | 11.5s | **6.5x** | │ | **6.5x** |
+| **MySQL** | Async | 1,000,000 | │ | 50.9s | 7.3s | **7.0x** | │ | 127.5s | 16.0s | **7.9x** | │ | 62.1s | 8.6s | **7.2x** | │ | **7.5x** |
+| **SQL Server** | Sync | 1,000,000 | │ | 81.1s | 14.9s | **5.4x** | │ | 104.5s | 19.7s | **5.3x** | │ | 64.5s | 12.4s | **5.2x** | │ | **5.3x** |
+| **SQL Server** | Async | 1,000,000 | │ | 83.8s | 15.5s | **5.4x** | │ | 103.3s | 19.3s | **5.4x** | │ | 66.2s | 12.8s | **5.2x** | │ | **5.3x** |
 
-TestTable has 6 columns (Guid, string x2, int, decimal?, DateTime), all inserted and 2 were updated.<br>
-Test done locally on configuration: INTEL i7-10510U CPU 2.30GHz, DDR3 16 GB, SSD SAMSUNG 512 GB.<br>
 For small data sets there is an overhead since most Bulk ops need to create Temp table and also Drop it after finish.<br>
 Probably good advice would be to use **Bulk ops for sets greater than 1000**.
 
@@ -157,7 +162,6 @@ context.BulkRead(items, bulkConfig); // Items list will be loaded from Db with d
 **SaveChanges** uses Change Tracker to find all modified(CUD) entities and call proper BulkOperations for each table.<br>
 Because it needs tracking it is slower then pure BulkOps but still much faster then regular SaveChanges.<br>
 With config *OnSaveChangesSetFK* setting FKs can be controlled depending on whether PKs are generated in Db or in memory.<br>
-Support for this method was added in version 6 of the library.<br>
 Before calling this method newly created should be added into Range:
 ```C#
 context.Items.AddRange(newEntities); // if newEntities is parent list it can have child sublists
@@ -326,4 +330,4 @@ public class Student : Person { ... }
 context.Students.AddRange(entities); // adding to Context so that Shadow property 'Discriminator' gets set
 context.BulkInsert(entities);
 ```
-**TPT** (Table-Per-Type) as of v5 is [partially supported](https://github.com/borisdj/EFCore.BulkExtensions/issues/493).
+**TPT** (Table-Per-Type) is [partially supported](https://github.com/borisdj/EFCore.BulkExtensions/issues/493).

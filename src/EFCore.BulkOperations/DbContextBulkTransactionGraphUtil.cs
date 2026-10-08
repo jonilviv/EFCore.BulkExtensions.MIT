@@ -16,36 +16,7 @@ internal static class DbContextBulkTransactionGraphUtil
 {
     public static void ExecuteWithGraph(DbContext context, IEnumerable<object> entities, OperationType operationType, BulkConfig bulkConfig, Action<decimal>? progress)
     {
-        ExecuteWithGraphAsync(context, entities, operationType, bulkConfig, progress, isAsync: false, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    public static async Task ExecuteWithGraphAsync(DbContext context, IEnumerable<object> entities, OperationType operationType, BulkConfig bulkConfig, Action<decimal>? progress, CancellationToken cancellationToken)
-    {
-        await ExecuteWithGraphAsync(context, entities, operationType, bulkConfig, progress, isAsync: true, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task ExecuteWithGraphAsync(DbContext context, IEnumerable<object> entities, OperationType operationType, BulkConfig bulkConfig, Action<decimal>? progress, bool isAsync, CancellationToken cancellationToken)
-    {
-        if (operationType != OperationType.Insert
-                   && operationType != OperationType.InsertOrUpdate
-                   && operationType != OperationType.InsertOrUpdateOrDelete
-                   && operationType != OperationType.Update)
-        {
-            throw new InvalidBulkConfigException($"{nameof(BulkConfig)}.{nameof(BulkConfig.IncludeGraph)} only supports Insert or Update operations.");
-        }
-
-        // Sqlite bulk merge adapter does not support multiple objects of the same type with a zero value primary key
-        if (!SqlAdaptersMapping.GetAdapterDialect(context).SupportsGraphOperations)
-        {
-            throw new NotSupportedException("Sqlite is not currently supported due to its BulkInsert implementation.");
-        }
-
-        bulkConfig.PreserveInsertOrder = true; // Required for SetOutputIdentity ('true' is default but here explicitly assigned again in case it was changed to 'false' in BulkConfing)
-        bulkConfig.SetOutputIdentity = true; // If this is set to false, won't be able to propogate new primary keys to the relationships
-
-        // If this is set to false, wont' be able to support some code first model types as EFCore uses shadow properties when a relationship's foreign keys arent explicitly defined
-        bulkConfig.EnableShadowProperties = true;
-
+        ConfigureAndValidateGraph(context, operationType, bulkConfig);
         IEnumerable<GraphNode>? graphNodes = GraphUtil.GetTopologicallySortedGraph(context, entities);
 
         if (graphNodes == null)
@@ -53,13 +24,11 @@ internal static class DbContextBulkTransactionGraphUtil
             return;
         }
 
-        // Inserting an entity graph must be done within a transaction otherwise the database could end up in a bad state
         bool hasExistingTransaction = context.Database.CurrentTransaction != null || Transaction.Current != null;
-        IDbContextTransaction? transaction = hasExistingTransaction ? null : context.Database.CurrentTransaction ?? (isAsync ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false) : context.Database.BeginTransaction());
+        IDbContextTransaction? transaction = hasExistingTransaction ? null : context.Database.CurrentTransaction ?? context.Database.BeginTransaction();
 
         try
         {
-            // Group the graph nodes by entity type so we can merge them into the database in batches, in the correct order of dependency (topological order)
             IEnumerable<IGrouping<Type, GraphNode>> graphNodesGroupedByType = graphNodes.GroupBy(y => y.Entity.GetType());
 
             foreach (IGrouping<Type, GraphNode> graphNodeGroup in graphNodesGroupedByType)
@@ -72,66 +41,114 @@ internal static class DbContextBulkTransactionGraphUtil
                     continue;
                 }
 
-                // It is possible the object graph contains duplicate entities (by primary key) but the entities are different object instances in memory.
-                // This an happen when deserializing a nested JSON tree for example. So filter out the duplicates.
                 IEnumerable<object> entitySelection = graphNodeGroup.Select(y => y.Entity);
                 List<object> entitiesToAction = GetUniqueEntities(context, entitySelection).ToList();
                 TableInfo tableInfo = TableInfo.CreateInstance(context, entityClrType, entitiesToAction, operationType, bulkConfig);
 
-                if (isAsync)
-                {
-                    await SqlBulkOperation.MergeAsync(context, entityClrType, entitiesToAction, tableInfo, operationType, progress, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    SqlBulkOperation.Merge(context, entityClrType, entitiesToAction, tableInfo, operationType, progress);
-                }
+                SqlBulkOperation.Merge(context, entityClrType, entitiesToAction, tableInfo, operationType, progress);
 
-                // Set the foreign keys for dependents so they may be inserted on the next loop
                 List<object> dependentsOfSameType = SetForeignKeysForDependentsAndYieldSameTypeDependents(context, entityClrType, graphNodeGroup).ToList();
 
-                // If there are any dependents of the same type (parent child relationship), then save those dependent entities again to commit the fk values
                 if (dependentsOfSameType.Any())
                 {
                     TableInfo dependentTableInfo = TableInfo.CreateInstance(context, entityClrType, dependentsOfSameType, operationType, bulkConfig);
 
-                    if (isAsync)
-                    {
-                        await SqlBulkOperation.MergeAsync(context, entityClrType, dependentsOfSameType, dependentTableInfo, operationType, progress, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        SqlBulkOperation.Merge(context, entityClrType, dependentsOfSameType, dependentTableInfo, operationType, progress);
-                    }
+                    SqlBulkOperation.Merge(context, entityClrType, dependentsOfSameType, dependentTableInfo, operationType, progress);
                 }
             }
 
-            if (hasExistingTransaction == false)
+            if (!hasExistingTransaction)
             {
-                if (isAsync)
-                {
-                    await transaction!.CommitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    transaction!.Commit();
-                }
+                transaction!.Commit();
             }
         }
         finally
         {
-            if (hasExistingTransaction == false)
+            if (!hasExistingTransaction)
             {
-                if (isAsync)
+                transaction?.Dispose();
+            }
+        }
+    }
+
+    public static async Task ExecuteWithGraphAsync(DbContext context, IEnumerable<object> entities, OperationType operationType, BulkConfig bulkConfig, Action<decimal>? progress, CancellationToken cancellationToken)
+    {
+        ConfigureAndValidateGraph(context, operationType, bulkConfig);
+        IEnumerable<GraphNode>? graphNodes = GraphUtil.GetTopologicallySortedGraph(context, entities);
+
+        if (graphNodes == null)
+        {
+            return;
+        }
+
+        bool hasExistingTransaction = context.Database.CurrentTransaction != null || Transaction.Current != null;
+        IDbContextTransaction? transaction = hasExistingTransaction ? null : context.Database.CurrentTransaction ?? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            IEnumerable<IGrouping<Type, GraphNode>> graphNodesGroupedByType = graphNodes.GroupBy(y => y.Entity.GetType());
+
+            foreach (IGrouping<Type, GraphNode> graphNodeGroup in graphNodesGroupedByType)
+            {
+                Type entityClrType = graphNodeGroup.Key;
+                IEntityType entityType = context.Model.FindEntityType(entityClrType) ?? throw new ArgumentException($"Unable to determine EntityType from given type {entityClrType.Name}");
+
+                if (OwnedTypeUtil.IsOwnedInSameTableAsOwner(entityType))
                 {
-                    await transaction!.DisposeAsync().ConfigureAwait(false);
+                    continue;
                 }
-                else
+
+                IEnumerable<object> entitySelection = graphNodeGroup.Select(y => y.Entity);
+                List<object> entitiesToAction = GetUniqueEntities(context, entitySelection).ToList();
+                TableInfo tableInfo = TableInfo.CreateInstance(context, entityClrType, entitiesToAction, operationType, bulkConfig);
+
+                await SqlBulkOperation.MergeAsync(context, entityClrType, entitiesToAction, tableInfo, operationType, progress, cancellationToken).ConfigureAwait(false);
+
+                List<object> dependentsOfSameType = SetForeignKeysForDependentsAndYieldSameTypeDependents(context, entityClrType, graphNodeGroup).ToList();
+
+                if (dependentsOfSameType.Any())
                 {
-                    transaction!.Dispose();
+                    TableInfo dependentTableInfo = TableInfo.CreateInstance(context, entityClrType, dependentsOfSameType, operationType, bulkConfig);
+
+                    await SqlBulkOperation.MergeAsync(context, entityClrType, dependentsOfSameType, dependentTableInfo, operationType, progress, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (!hasExistingTransaction)
+            {
+                await transaction!.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (!hasExistingTransaction)
+            {
+                if (transaction is not null)
+                {
+                    await transaction.DisposeAsync().ConfigureAwait(false);
                 }
             }
         }
+    }
+
+    private static void ConfigureAndValidateGraph(DbContext context, OperationType operationType, BulkConfig bulkConfig)
+    {
+        if (operationType != OperationType.Insert
+            && operationType != OperationType.InsertOrUpdate
+            && operationType != OperationType.InsertOrUpdateOrDelete
+            && operationType != OperationType.Update)
+        {
+            throw new InvalidBulkConfigException($"{nameof(BulkConfig)}.{nameof(BulkConfig.IncludeGraph)} only supports Insert or Update operations.");
+        }
+
+        if (!SqlAdaptersMapping.GetAdapterDialect(context).SupportsGraphOperations)
+        {
+            throw new NotSupportedException("Sqlite is not currently supported due to its BulkInsert implementation.");
+        }
+
+        bulkConfig.PreserveInsertOrder = true;
+        bulkConfig.SetOutputIdentity = true;
+        bulkConfig.EnableShadowProperties = true;
     }
 
     private static IEnumerable<object> SetForeignKeysForDependentsAndYieldSameTypeDependents(DbContext context, Type entityClrType, IEnumerable<GraphNode> graphNodeGroup)

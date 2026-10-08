@@ -31,24 +31,6 @@ updates:
           - "minor"
           - "patch"
 
-  # EF Core v9 projects
-  - package-ecosystem: "nuget"
-    directory: "/NugetProjects/EFCore.BulkExtensions.v9*"
-    schedule:
-      interval: "daily"
-    reviewers:
-      - "videokojot"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      efcore-v9-dependencies:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-
   # EF Core v10 projects
   - package-ecosystem: "nuget"
     directory: "/NugetProjects/EFCore.BulkExtensions.v10*"

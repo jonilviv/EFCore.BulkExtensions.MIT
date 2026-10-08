@@ -24,28 +24,8 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
     /// <inheritdoc/>
     public void Insert<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, Action<decimal>? progress)
     {
-        InsertAsync(context, type, entities, tableInfo, progress, isAsync: false, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    /// <inheritdoc/>
-    public async Task InsertAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, Action<decimal>? progress, CancellationToken cancellationToken)
-    {
-        await InsertAsync(context, type, entities, tableInfo, progress, isAsync: false, CancellationToken.None).ConfigureAwait(false);
-    }
-
-    internal static async Task InsertAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, Action<decimal>? progress, bool isAsync, CancellationToken cancellationToken)
-    {
         tableInfo.CheckToSetIdentityForPreserveOrder(tableInfo, entities);
-
-        if (isAsync)
-        {
-            await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            context.Database.OpenConnection();
-        }
-
+        context.Database.OpenConnection();
         DbConnection connection = context.GetUnderlyingConnection(tableInfo.BulkConfig);
 
         try
@@ -56,26 +36,11 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
             SetMySqlBulkCopyConfig(mySqlBulkCopy, tableInfo);
 
             DataTable dataTable = GetDataTable(context, type, entities, mySqlBulkCopy, tableInfo);
-
-            if (isAsync)
-            {
-                await mySqlBulkCopy.WriteToServerAsync(dataTable, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                mySqlBulkCopy.WriteToServer(dataTable);
-            }
+            mySqlBulkCopy.WriteToServer(dataTable);
         }
         finally
         {
-            if (isAsync)
-            {
-                await context.Database.CloseConnectionAsync().ConfigureAwait(false);
-            }
-            else
-            {
-                context.Database.CloseConnection();
-            }
+            context.Database.CloseConnection();
         }
 
         if (!tableInfo.CreatedOutputTable)
@@ -83,39 +48,46 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
             tableInfo.CheckToSetIdentityForPreserveOrder(tableInfo, entities, reset: true);
         }
     }
+
+    /// <inheritdoc/>
+    public async Task InsertAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, Action<decimal>? progress, CancellationToken cancellationToken)
+    {
+        tableInfo.CheckToSetIdentityForPreserveOrder(tableInfo, entities);
+        await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        DbConnection connection = context.GetUnderlyingConnection(tableInfo.BulkConfig);
+
+        try
+        {
+            IDbContextTransaction? transaction = context.Database.CurrentTransaction;
+            MySqlBulkCopy mySqlBulkCopy = GetMySqlBulkCopy((MySqlConnection)connection, transaction, tableInfo.BulkConfig);
+
+            SetMySqlBulkCopyConfig(mySqlBulkCopy, tableInfo);
+
+            DataTable dataTable = GetDataTable(context, type, entities, mySqlBulkCopy, tableInfo);
+            await mySqlBulkCopy.WriteToServerAsync(dataTable, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+        }
+
+        if (!tableInfo.CreatedOutputTable)
+        {
+            tableInfo.CheckToSetIdentityForPreserveOrder(tableInfo, entities, reset: true);
+        }
+    }
+
     /// <inheritdoc/>
     public void Merge<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, OperationType operationType, Action<decimal>? progress) where T : class
     {
-        MergeAsync(context, type, entities, tableInfo, operationType, progress, isAsync: false, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    /// <inheritdoc/>
-    public async Task MergeAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, OperationType operationType, Action<decimal>? progress, CancellationToken cancellationToken) where T : class
-    {
-        await MergeAsync(context, type, entities, tableInfo, operationType, progress, isAsync: true, CancellationToken.None).ConfigureAwait(false);
-    }
-
-    internal async Task MergeAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, OperationType operationType, Action<decimal>? progress, bool isAsync, CancellationToken cancellationToken)
-        where T : class
-    {
-        //Because of using temp table in case of update, we need to access created temp table in Insert method.
         bool hasExistingTransaction = context.Database.CurrentTransaction != null;
-        IDbContextTransaction transaction = context.Database.CurrentTransaction ?? (isAsync ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false) : context.Database.BeginTransaction());
+        IDbContextTransaction transaction = context.Database.CurrentTransaction ?? context.Database.BeginTransaction();
 
         if (tableInfo.BulkConfig.CustomSourceTableName == null)
         {
             tableInfo.InsertToTempTable = true;
-
             string sqlCreateTableCopy = SqlQueryBuilderMySql.CreateTableCopy(tableInfo, tableInfo.FullTableName, tableInfo.FullTempTableName, tableInfo.InsertToTempTable);
-
-            if (isAsync)
-            {
-                await context.Database.ExecuteSqlRawAsync(sqlCreateTableCopy, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                context.Database.ExecuteSqlRaw(sqlCreateTableCopy);
-            }
+            context.Database.ExecuteSqlRaw(sqlCreateTableCopy);
         }
 
         bool doDropUniqueConstrain = false;
@@ -123,30 +95,13 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
 
         if (string.Join("_", tableInfo.EntityPkPropertyColumnNameDict.Keys.ToList()) == string.Join("_", tableInfo.PrimaryKeysPropertyColumnNameDict.Keys.ToList()))
         {
-            hasUniqueConstrain = true; // ExplicitUniqueConstrain not required for PK
-        }
-
-        if (!hasUniqueConstrain)
-        {
-            // TODO 
-            //hasUniqueConstrain = await CheckHasExplicitUniqueConstrainAsync(context, connection, tableInfo, isAsync, cancellationToken);
-            // throws "The transaction associated with this command is not the connection’s active transaction";
-            // https://mysqlconnector.net/troubleshooting/transaction-usage/
+            hasUniqueConstrain = true;
         }
 
         if (!hasUniqueConstrain)
         {
             string createUniqueConstrain = SqlQueryBuilderMySql.CreateUniqueConstrain(tableInfo);
-
-            if (isAsync)
-            {
-                await context.Database.ExecuteSqlRawAsync(createUniqueConstrain, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                context.Database.ExecuteSqlRaw(createUniqueConstrain);
-            }
-
+            context.Database.ExecuteSqlRaw(createUniqueConstrain);
             doDropUniqueConstrain = true;
         }
 
@@ -154,65 +109,27 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
         {
             tableInfo.InsertToTempTable = true;
             string sqlCreateOutputTableCopy = SqlQueryBuilderMySql.CreateTableCopy(tableInfo, tableInfo.FullTableName, tableInfo.FullTempOutputTableName, tableInfo.InsertToTempTable);
-
-            if (isAsync)
-            {
-                await context.Database.ExecuteSqlRawAsync(sqlCreateOutputTableCopy, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                context.Database.ExecuteSqlRaw(sqlCreateOutputTableCopy);
-            }
+            context.Database.ExecuteSqlRaw(sqlCreateOutputTableCopy);
         }
 
         if (tableInfo.BulkConfig.CustomSourceTableName == null)
         {
-            if (isAsync)
-            {
-                await InsertAsync(context, type, entities, tableInfo, progress, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                Insert(context, type, entities, tableInfo, progress);
-            }
+            Insert(context, type, entities, tableInfo, progress);
         }
 
         try
         {
             string sqlMergeTable = SqlQueryBuilderMySql.MergeTable<T>(tableInfo, operationType);
-
-            if (isAsync)
-            {
-                await context.Database.ExecuteSqlRawAsync(sqlMergeTable, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                context.Database.ExecuteSqlRaw(sqlMergeTable);
-            }
+            context.Database.ExecuteSqlRaw(sqlMergeTable);
 
             if (tableInfo.CreatedOutputTable)
             {
-                if (isAsync)
-                {
-                    await tableInfo.LoadOutputDataAsync(context, type, entities, tableInfo, isAsync: true, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    tableInfo.LoadOutputDataAsync(context, type, entities, tableInfo, isAsync: false, cancellationToken).GetAwaiter().GetResult();
-                }
+                tableInfo.LoadOutputData(context, type, entities, tableInfo);
             }
 
-            if (hasExistingTransaction == false && !tableInfo.BulkConfig.IncludeGraph)
+            if (!hasExistingTransaction && !tableInfo.BulkConfig.IncludeGraph)
             {
-                if (isAsync)
-                {
-                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    transaction.Commit();
-                }
+                transaction.Commit();
             }
         }
         finally
@@ -220,16 +137,7 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
             if (doDropUniqueConstrain)
             {
                 string dropUniqueConstrain = SqlQueryBuilderMySql.DropUniqueConstrain(tableInfo);
-
-                if (isAsync)
-                {
-                    await context.Database.ExecuteSqlRawAsync(dropUniqueConstrain, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-                else
-                {
-                    context.Database.ExecuteSqlRaw(dropUniqueConstrain);
-                }
+                context.Database.ExecuteSqlRaw(dropUniqueConstrain);
             }
 
             if (!tableInfo.BulkConfig.UseTempDb)
@@ -237,41 +145,103 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
                 if (tableInfo.CreatedOutputTable)
                 {
                     string sqlDropOutputTable = SqlQueryBuilderMySql.DropTable(tableInfo.FullTempOutputTableName, tableInfo.InsertToTempTable);
-
-                    if (isAsync)
-                    {
-                        await context.Database.ExecuteSqlRawAsync(sqlDropOutputTable, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        context.Database.ExecuteSqlRaw(sqlDropOutputTable);
-                    }
+                    context.Database.ExecuteSqlRaw(sqlDropOutputTable);
                 }
 
                 if (tableInfo.BulkConfig.CustomSourceTableName == null)
                 {
                     string sqlDropTable = SqlQueryBuilderMySql.DropTable(tableInfo.FullTempTableName, tableInfo.InsertToTempTable);
-
-                    if (isAsync)
-                    {
-                        await context.Database.ExecuteSqlRawAsync(sqlDropTable, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        context.Database.ExecuteSqlRaw(sqlDropTable);
-                    }
+                    context.Database.ExecuteSqlRaw(sqlDropTable);
                 }
 
-                if (hasExistingTransaction == false && !tableInfo.BulkConfig.IncludeGraph)
+                if (!hasExistingTransaction && !tableInfo.BulkConfig.IncludeGraph)
                 {
-                    if (isAsync)
-                    {
-                        await transaction.DisposeAsync().ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        transaction.Dispose();
-                    }
+                    transaction.Dispose();
+                }
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task MergeAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, OperationType operationType, Action<decimal>? progress, CancellationToken cancellationToken) where T : class
+    {
+        bool hasExistingTransaction = context.Database.CurrentTransaction != null;
+        IDbContextTransaction transaction = context.Database.CurrentTransaction ?? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        if (tableInfo.BulkConfig.CustomSourceTableName == null)
+        {
+            tableInfo.InsertToTempTable = true;
+            string sqlCreateTableCopy = SqlQueryBuilderMySql.CreateTableCopy(tableInfo, tableInfo.FullTableName, tableInfo.FullTempTableName, tableInfo.InsertToTempTable);
+            await context.Database.ExecuteSqlRawAsync(sqlCreateTableCopy, cancellationToken).ConfigureAwait(false);
+        }
+
+        bool doDropUniqueConstrain = false;
+        bool hasUniqueConstrain = false;
+
+        if (string.Join("_", tableInfo.EntityPkPropertyColumnNameDict.Keys.ToList()) == string.Join("_", tableInfo.PrimaryKeysPropertyColumnNameDict.Keys.ToList()))
+        {
+            hasUniqueConstrain = true;
+        }
+
+        if (!hasUniqueConstrain)
+        {
+            string createUniqueConstrain = SqlQueryBuilderMySql.CreateUniqueConstrain(tableInfo);
+            await context.Database.ExecuteSqlRawAsync(createUniqueConstrain, cancellationToken).ConfigureAwait(false);
+            doDropUniqueConstrain = true;
+        }
+
+        if (tableInfo.CreatedOutputTable)
+        {
+            tableInfo.InsertToTempTable = true;
+            string sqlCreateOutputTableCopy = SqlQueryBuilderMySql.CreateTableCopy(tableInfo, tableInfo.FullTableName, tableInfo.FullTempOutputTableName, tableInfo.InsertToTempTable);
+            await context.Database.ExecuteSqlRawAsync(sqlCreateOutputTableCopy, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (tableInfo.BulkConfig.CustomSourceTableName == null)
+        {
+            await InsertAsync(context, type, entities, tableInfo, progress, cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            string sqlMergeTable = SqlQueryBuilderMySql.MergeTable<T>(tableInfo, operationType);
+            await context.Database.ExecuteSqlRawAsync(sqlMergeTable, cancellationToken).ConfigureAwait(false);
+
+            if (tableInfo.CreatedOutputTable)
+            {
+                await tableInfo.LoadOutputDataAsync(context, type, entities, tableInfo, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!hasExistingTransaction && !tableInfo.BulkConfig.IncludeGraph)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (doDropUniqueConstrain)
+            {
+                string dropUniqueConstrain = SqlQueryBuilderMySql.DropUniqueConstrain(tableInfo);
+                await context.Database.ExecuteSqlRawAsync(dropUniqueConstrain, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!tableInfo.BulkConfig.UseTempDb)
+            {
+                if (tableInfo.CreatedOutputTable)
+                {
+                    string sqlDropOutputTable = SqlQueryBuilderMySql.DropTable(tableInfo.FullTempOutputTableName, tableInfo.InsertToTempTable);
+                    await context.Database.ExecuteSqlRawAsync(sqlDropOutputTable, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (tableInfo.BulkConfig.CustomSourceTableName == null)
+                {
+                    string sqlDropTable = SqlQueryBuilderMySql.DropTable(tableInfo.FullTempTableName, tableInfo.InsertToTempTable);
+                    await context.Database.ExecuteSqlRawAsync(sqlDropTable, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (!hasExistingTransaction && !tableInfo.BulkConfig.IncludeGraph)
+                {
+                    await transaction.DisposeAsync().ConfigureAwait(false);
                 }
             }
         }
@@ -616,7 +586,7 @@ public sealed class MySqlAdapter : ISqlOperationsAdapter
                 {
                     using MemoryStream memStream = new();
                     using BinaryWriter binWriter = new(memStream);
-#if !NET8_0 && !NET9_0 && !NET10_0
+#if !NET8_0 && !NET10_0
                     hierarchyValue.Write(binWriter);
 #endif
                     propertyValue = memStream.ToArray();

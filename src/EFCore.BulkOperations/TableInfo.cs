@@ -306,7 +306,7 @@ public sealed class TableInfo
             (a.GetDefaultValueSql() != null ||
              (a.GetDefaultValue() != null &&
               a.ValueGenerated != ValueGenerated.Never &&
-              a.ClrType != typeof(Guid)) // Since .Net_6.0 in EF 'Guid' type has DefaultValue even when not explicitly defined with Annotation or FluentApi
+              a.ClrType != typeof(Guid)) // In EF 'Guid' type has DefaultValue even when not explicitly defined with Annotation or FluentApi
             ));
 
         foreach (IProperty? propertyWithDefaultValue in propertiesWithDefaultValues)
@@ -621,91 +621,87 @@ public sealed class TableInfo
 
     #region SqlCommands
 
-    public async Task<MergeActionCounts> GetMergeActionCounts(DbContext context, bool isAsync, CancellationToken cancellationToken)
+    public MergeActionCounts GetMergeActionCounts(DbContext context)
+    {
+        using DbCommand command = CreateMergeActionCountsCommand(context);
+
+        if (command.Connection!.State != ConnectionState.Open)
+        {
+            command.Connection.Open();
+        }
+
+        using DbDataReader reader = command.ExecuteReader();
+        MergeActionCounts mergeCounts = ParseMergeActionCounts(reader);
+
+        return mergeCounts;
+    }
+
+    public async Task<MergeActionCounts> GetMergeActionCountsAsync(DbContext context, CancellationToken cancellationToken)
+    {
+        await using DbCommand command = CreateMergeActionCountsCommand(context);
+
+        if (command.Connection!.State != ConnectionState.Open)
+        {
+            await command.Connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        MergeActionCounts mergeCounts = await ParseMergeActionCountsAsync(reader, cancellationToken).ConfigureAwait(false);
+
+        return mergeCounts;
+    }
+
+    private DbCommand CreateMergeActionCountsCommand(DbContext context)
     {
         string commandText = $"SELECT COUNT (*) FROM {FullTempOutputTableName} WHERE {EscL}{SqlActionIud}{EscR} = 'I';\n"
                           + $"SELECT COUNT (*) FROM {FullTempOutputTableName} WHERE {EscL}{SqlActionIud}{EscR} = 'U' ;\n"
                           + $"SELECT COUNT (*) FROM {FullTempOutputTableName} WHERE {EscL}{SqlActionIud}{EscR} = 'D';";
 
-        int inserted = -1;
-        int updated = -1;
-        int deleted = -1;
+        DbCommand command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = commandText;
 
-        if (isAsync)
+        if (context.Database.CurrentTransaction != null)
         {
-            await GetMergeActionCountsInternalAsync().ConfigureAwait(false);
-        }
-        else
-        {
-            GetMergeActionCountsInternal();
+            command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
         }
 
-        var mergeCounts = new MergeActionCounts(inserted, updated, deleted);
+        return command;
+    }
 
-        return mergeCounts;
+    private static MergeActionCounts ParseMergeActionCounts(DbDataReader reader)
+    {
+        reader.Read();
+        int inserted = reader.GetInt32(0);
+        reader.NextResult();
 
-        async Task GetMergeActionCountsInternalAsync()
-        {
-#pragma warning disable CA2007
+        reader.Read();
+        int updated = reader.GetInt32(0);
+        reader.NextResult();
 
-            await using DbCommand command = context.Database.GetDbConnection().CreateCommand();
+        reader.Read();
+        int deleted = reader.GetInt32(0);
 
-            command.CommandText = commandText;
+        var counts = new MergeActionCounts(inserted, updated, deleted);
 
-            if (command.Connection!.State != ConnectionState.Open)
-            {
-                await command.Connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            }
+        return counts;
+    }
 
-            if (context.Database.CurrentTransaction != null)
-            {
-                command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
-            }
+    private static async Task<MergeActionCounts> ParseMergeActionCountsAsync(DbDataReader reader, CancellationToken cancellationToken)
+    {
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        int inserted = reader.GetInt32(0);
+        await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
 
-            await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        int updated = reader.GetInt32(0);
+        await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
 
-            await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-            inserted = reader.GetInt32(0);
-            await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        int deleted = reader.GetInt32(0);
 
-            await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-            updated = reader.GetInt32(0);
-            await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
+        var counts = new MergeActionCounts(inserted, updated, deleted);
 
-            await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-            deleted = reader.GetInt32(0);
-#pragma warning restore CA2007
-        }
-
-        void GetMergeActionCountsInternal()
-        {
-            using DbCommand command = context.Database.GetDbConnection().CreateCommand();
-
-            command.CommandText = commandText;
-
-            if (command.Connection!.State != ConnectionState.Open)
-            {
-                command.Connection.Open();
-            }
-
-            if (context.Database.CurrentTransaction != null)
-            {
-                command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
-            }
-
-            using DbDataReader reader = command.ExecuteReader();
-
-            reader.Read();
-            inserted = reader.GetInt32(0);
-            reader.NextResult();
-
-            reader.Read();
-            updated = reader.GetInt32(0);
-            reader.NextResult();
-
-            reader.Read();
-            deleted = reader.GetInt32(0);
-        }
+        return counts;
     }
 
     #endregion
@@ -1143,120 +1139,157 @@ public sealed class TableInfo
 
     #region CompiledQuery
 
-    public async Task LoadOutputDataAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, bool isAsync, CancellationToken cancellationToken) where T : class
+    public void LoadOutputData<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo) where T : class
     {
-        bool hasIdentity = OutputPropertyColumnNamesDict.Any(a => a.Value == IdentityColumnName) ||
-                           (tableInfo.HasSinglePrimaryKey && tableInfo.DefaultValueProperties.Contains(tableInfo.PrimaryKeysPropertyColumnNameDict.FirstOrDefault().Key));
-
-        if (BulkConfig.SetOutputIdentity && hasIdentity)
+        if (ShouldSetOutputIdentity(tableInfo))
         {
             if (BulkConfig.UseOriginalIndexToIdentityMappingColumn)
             {
-                List<IndexToGeneratedId> map = isAsync ? await QueryOutputTableForIndexToIdMapping(context, isAsync, cancellationToken).ConfigureAwait(false)
-                              : QueryOutputTableForIndexToIdMapping(context, isAsync, cancellationToken).GetAwaiter().GetResult();
+                List<IndexToGeneratedId> map = QueryOutputTableForIndexToIdMapping(context);
 
                 UpdateEntitiesIdentityByMap(tableInfo, entities, map);
             }
             else
             {
-                string sqlQuery = SqlAdaptersMapping.DbServer(context).QueryBuilder.SelectFromOutputTable(this);
-                //var entitiesWithOutputIdentity = await QueryOutputTableAsync<T>(context, sqlQuery).ToListAsync(cancellationToken).ConfigureAwait(false); // TempFIX
-                List<object> entitiesWithOutputIdentity = QueryOutputTable(context, type, sqlQuery).Cast<object>().ToList();
-                //var entitiesWithOutputIdentity = (typeof(T) == type) ? QueryOutputTable<object>(context, sqlQuery).ToList() : QueryOutputTable(context, type, sqlQuery).Cast<object>().ToList();
-
-                UpdateEntitiesIdentity(tableInfo, entities, entitiesWithOutputIdentity);
+                UpdateIdentityFromOutputTable(context, type, entities, tableInfo);
             }
         }
 
         if (BulkConfig.CalculateStats)
         {
-            MergeActionCounts mergeCounts = isAsync ? await GetMergeActionCounts(context, isAsync: true, cancellationToken).ConfigureAwait(false)
-                                  : GetMergeActionCounts(context, isAsync: false, cancellationToken).GetAwaiter().GetResult();
-            BulkConfig.StatsInfo = new StatsInfo
-            {
-                StatsNumberUpdated = mergeCounts.Updated,
-                StatsNumberDeleted = mergeCounts.Deleted,
-                StatsNumberInserted = mergeCounts.Inserted,
-            };
+            MergeActionCounts mergeCounts = GetMergeActionCounts(context);
+
+            ApplyStats(mergeCounts);
         }
     }
 
-    internal async Task<List<IndexToGeneratedId>> QueryOutputTableForIndexToIdMapping(DbContext context, bool isAsync, CancellationToken cancellationToken)
+    public async Task LoadOutputDataAsync<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo, CancellationToken cancellationToken) where T : class
     {
-        bool shouldLoadAlsoTimestamp = false;
+        if (ShouldSetOutputIdentity(tableInfo))
+        {
+            if (BulkConfig.UseOriginalIndexToIdentityMappingColumn)
+            {
+                List<IndexToGeneratedId> map = await QueryOutputTableForIndexToIdMappingAsync(context, cancellationToken).ConfigureAwait(false);
+
+                UpdateEntitiesIdentityByMap(tableInfo, entities, map);
+            }
+            else
+            {
+                UpdateIdentityFromOutputTable(context, type, entities, tableInfo);
+            }
+        }
+
+        if (BulkConfig.CalculateStats)
+        {
+            MergeActionCounts mergeCounts = await GetMergeActionCountsAsync(context, cancellationToken).ConfigureAwait(false);
+
+            ApplyStats(mergeCounts);
+        }
+    }
+
+    private bool ShouldSetOutputIdentity(TableInfo tableInfo)
+    {
+        bool hasIdentity = OutputPropertyColumnNamesDict.Any(a => a.Value == IdentityColumnName) ||
+                           (tableInfo.HasSinglePrimaryKey && tableInfo.DefaultValueProperties.Contains(tableInfo.PrimaryKeysPropertyColumnNameDict.FirstOrDefault().Key));
+        bool result = BulkConfig.SetOutputIdentity && hasIdentity;
+
+        return result;
+    }
+
+    private void UpdateIdentityFromOutputTable<T>(DbContext context, Type type, IList<T> entities, TableInfo tableInfo) where T : class
+    {
+        string sqlQuery = SqlAdaptersMapping.DbServer(context).QueryBuilder.SelectFromOutputTable(this);
+        List<object> entitiesWithOutputIdentity = QueryOutputTable(context, type, sqlQuery).Cast<object>().ToList();
+
+        UpdateEntitiesIdentity(tableInfo, entities, entitiesWithOutputIdentity);
+    }
+
+    private void ApplyStats(MergeActionCounts mergeCounts)
+    {
+        BulkConfig.StatsInfo = new StatsInfo
+        {
+            StatsNumberUpdated = mergeCounts.Updated,
+            StatsNumberDeleted = mergeCounts.Deleted,
+            StatsNumberInserted = mergeCounts.Inserted,
+        };
+    }
+
+    internal List<IndexToGeneratedId> QueryOutputTableForIndexToIdMapping(DbContext context)
+    {
+        string sql = GetOutputTableIndexToIdMappingSql(out bool shouldLoadAlsoTimestamp);
+        using DbCommand command = CreateOutputTableIndexToIdMappingCommand(context, sql);
+
+        if (command.Connection!.State != ConnectionState.Open)
+        {
+            command.Connection.Open();
+        }
+
+        using DbDataReader reader = command.ExecuteReader();
+        var results = new List<IndexToGeneratedId>();
+
+        while (reader.Read())
+        {
+            results.Add(ReadIndexToGeneratedIdRow(reader, shouldLoadAlsoTimestamp));
+        }
+
+        return results;
+    }
+
+    internal async Task<List<IndexToGeneratedId>> QueryOutputTableForIndexToIdMappingAsync(DbContext context, CancellationToken cancellationToken)
+    {
+#pragma warning disable CA2007
+        string sql = GetOutputTableIndexToIdMappingSql(out bool shouldLoadAlsoTimestamp);
+        await using DbCommand command = CreateOutputTableIndexToIdMappingCommand(context, sql);
+
+        if (command.Connection!.State != ConnectionState.Open)
+        {
+            await command.Connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var results = new List<IndexToGeneratedId>();
+
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(ReadIndexToGeneratedIdRow(reader, shouldLoadAlsoTimestamp));
+        }
+#pragma warning restore CA2007
+
+        return results;
+    }
+
+    private string GetOutputTableIndexToIdMappingSql(out bool shouldLoadAlsoTimestamp)
+    {
+        shouldLoadAlsoTimestamp = false;
         string? idColumn = HasIdentity ? IdentityColumnName : PrimaryKeysPropertyColumnNameDict.Values.Single();
         string identityColumn = $",{EscL}{idColumn}{EscR}";
         string timestampColumn = HasTimeStampColumn ? $", {EscL}{TimeStampColumnName}{EscR}" : string.Empty;
         string sql = $"SELECT {EscL}{OriginalIndexColumnName}{EscR} {identityColumn} {timestampColumn} FROM {FullTempOutputTableName} WHERE {EscL}{OriginalIndexColumnName}{EscR} is not null;";
-        var results = new List<IndexToGeneratedId>();
 
-        List<IndexToGeneratedId> queryMapping = isAsync ? await LoadResultsInternalAsync().ConfigureAwait(false) : LoadResultsInternal();
+        return sql;
+    }
 
-        return queryMapping;
+    private DbCommand CreateOutputTableIndexToIdMappingCommand(DbContext context, string sql)
+    {
+        DbCommand command = context.Database.GetDbConnection().CreateCommand();
+        command.CommandText = sql;
 
-        void ReadAndAddRow(DbDataReader reader)
+        if (context.Database.CurrentTransaction != null)
         {
-            int index = reader.GetInt32(0);
-            object id = reader.GetValue(1);
-            object? timestampValue = shouldLoadAlsoTimestamp ? reader.GetValue(2) : null;
-            results.Add(new IndexToGeneratedId(index, id, timestampValue));
+            command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
         }
 
-        async Task<List<IndexToGeneratedId>> LoadResultsInternalAsync()
-        {
-#pragma warning disable CA2007
-            await using DbCommand command = context.Database.GetDbConnection().CreateCommand();
-            command.CommandText = sql;
+        return command;
+    }
 
-            if (command.Connection!.State != ConnectionState.Open)
-            {
-                await command.Connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            }
+    private static IndexToGeneratedId ReadIndexToGeneratedIdRow(DbDataReader reader, bool shouldLoadAlsoTimestamp)
+    {
+        int index = reader.GetInt32(0);
+        object id = reader.GetValue(1);
+        object? timestampValue = shouldLoadAlsoTimestamp ? reader.GetValue(2) : null;
+        var row = new IndexToGeneratedId(index, id, timestampValue);
 
-            if (context.Database.CurrentTransaction != null)
-            {
-                command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
-            }
-
-            await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-#pragma warning restore CA2007
-
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                ReadAndAddRow(reader);
-            }
-
-            List<IndexToGeneratedId> asyncResults = results;
-
-            return asyncResults;
-        }
-
-        List<IndexToGeneratedId> LoadResultsInternal()
-        {
-            using DbCommand command = context.Database.GetDbConnection().CreateCommand();
-            command.CommandText = sql;
-
-            if (command.Connection!.State != ConnectionState.Open)
-            {
-                command.Connection.Open();
-            }
-
-            if (context.Database.CurrentTransaction != null)
-            {
-                command.Transaction = context.Database.CurrentTransaction.GetDbTransaction();
-            }
-
-            using DbDataReader reader = command.ExecuteReader();
-
-            while (reader.Read())
-            {
-                ReadAndAddRow(reader);
-            }
-
-            List<IndexToGeneratedId> syncResults = results;
-
-            return syncResults;
-        }
+        return row;
     }
 
     internal IEnumerable QueryOutputTable(DbContext context, Type type, string sqlQuery)

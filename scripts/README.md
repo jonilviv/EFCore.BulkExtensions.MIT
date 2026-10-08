@@ -6,7 +6,7 @@ For faster repeat runs or debugging, use **persistent local containers** and con
 
 ## Prerequisites
 
-- [.NET SDK](https://dotnet.microsoft.com/download) (8.x, 9.x, 10.x per `global.json`)
+- [.NET SDK](https://dotnet.microsoft.com/download) (8.x, 10.x)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS/Linux)
 
 ## Quick start (Docker databases)

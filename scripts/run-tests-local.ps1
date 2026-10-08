@@ -12,7 +12,7 @@
       adjust connection strings, set $UseDocker = $false, and ensure servers are running.
 
 .PARAMETER Framework
-    Target framework (net8.0, net9.0, net10.0). Default: net10.0
+    Target framework (net8.0, net10.0). Default: net10.0
 
 .PARAMETER UseDocker
     When true (default), uses docker connection strings. When false, uses testsettings.json + testsettings.local.json only.

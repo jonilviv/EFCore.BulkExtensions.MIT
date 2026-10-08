@@ -1,5 +1,5 @@
 ---
-description: Enforce CRLF and strict EOF for .targets/.xml files
+description: Enforce LF and strict EOF for .targets/.xml files
 globs: "{**/*.xml,**/*.csproj,**/*.targets,**/*.props}"
 alwaysApply: false
 ---

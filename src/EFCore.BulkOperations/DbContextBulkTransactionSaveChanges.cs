@@ -18,176 +18,30 @@ internal static class DbContextBulkTransactionSaveChanges
 
     public static void SaveChanges(DbContext context, BulkConfig? bulkConfig, Action<decimal>? progress)
     {
-        SaveChangesAsync(context, bulkConfig, progress, isAsync: false, CancellationToken.None).GetAwaiter().GetResult();
-    }
+        bulkConfig ??= new BulkConfig();
+        ConfigureSaveChanges(context, bulkConfig);
 
-    public static async Task SaveChangesAsync(DbContext context, BulkConfig? bulkConfig, Action<decimal>? progress, CancellationToken cancellationToken)
-    {
-        await SaveChangesAsync(context, bulkConfig, progress, isAsync: true, cancellationToken).ConfigureAwait(false);
-    }
+        List<BulkEntryGroup> entryGroups = GetChangedEntryGroups(context);
 
-    private static async Task SaveChangesAsync(DbContext context, BulkConfig? bulkConfig, Action<decimal>? progress, bool isAsync, CancellationToken cancellationToken)
-    {
-        // 2 ways:
-        // OPTION 1) iteration with Dic and Fast member
-        // OPTION 2) using Node model (here setting FK still not implemented)
-        int option = 1;
-
-        if (bulkConfig == null)
-        {
-            bulkConfig = new BulkConfig { };
-        }
-
-        DbContextBulkTransaction.CheckForMySqlUnsupportedFeatures(context, OperationType.SaveChanges, bulkConfig);
-
-        if (bulkConfig.OnSaveChangesSetFk && bulkConfig.SetOutputIdentity == false) // When FK is set by DB then SetOutput is required
-        {
-            bulkConfig.SetOutputIdentity = true;
-        }
-
-        IEnumerable<EntityEntry> entries = context.ChangeTracker.Entries();
-        var entriesGroupedByEntity = entries.GroupBy(a => new { EntityType = a.Entity.GetType(), a.State },
-                                                     (entry, group) => new { entry.EntityType, EntityState = entry.State, Entities = group.Select(a => a.Entity).ToList() });
-        var entriesGroupedChanged = entriesGroupedByEntity.Where(a => EntityStateBulkMethodDict.ContainsKey(a.EntityState) & a.Entities.Count >= 0);
-        var entriesGroupedChangedSorted = entriesGroupedChanged.OrderBy(a => a.EntityState.ToString() != EntityState.Modified.ToString()).ToList();
-
-        if (entriesGroupedChangedSorted.Count == 0)
+        if (entryGroups.Count == 0)
         {
             return;
         }
 
-        if (isAsync)
-        {
-            await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            context.Database.OpenConnection();
-        }
-
+        context.Database.OpenConnection();
         DbConnection connection = context.GetUnderlyingConnection(bulkConfig);
-
-        bool doExplicitCommit = false;
-
-        if (context.Database.CurrentTransaction == null)
-        {
-            doExplicitCommit = true;
-        }
+        bool doExplicitCommit = context.Database.CurrentTransaction == null;
 
         try
         {
             IDbContextTransaction transaction = context.Database.CurrentTransaction ?? context.Database.BeginTransaction();
+            var fastPropertyDicts = new Dictionary<string, Dictionary<string, FastProperty>>();
 
-            if (option == 1)
+            foreach (BulkEntryGroup entryGroup in entryGroups)
             {
-                Dictionary<string, Dictionary<string, FastProperty>> fastPropertyDicts = new();
-
-                foreach (var entryGroup in entriesGroupedChangedSorted)
-                {
-                    Type entityType = entryGroup.EntityType;
-                    entityType = (entityType.Namespace == "Castle.Proxies") ? entityType.BaseType! : entityType;
-                    IEntityType entityModelType = context.Model.FindEntityType(entityType) ?? throw new ArgumentNullException($"Unable to determine EntityType from given type with name {entityType.Name}");
-
-                    Dictionary<string, FastProperty> entityPropertyDict = new Dictionary<string, FastProperty>();
-
-                    if (!fastPropertyDicts.ContainsKey(entityType.Name))
-                    {
-                        IEnumerable<IProperty> properties = entityModelType.GetProperties();
-                        IEnumerable<PropertyInfo?> navigationPropertiesInfo = entityModelType.GetNavigations().Select(x => x.PropertyInfo);
-
-                        foreach (IProperty property in properties)
-                        {
-                            if (property.PropertyInfo != null) // skip Shadow Property
-                            {
-                                entityPropertyDict.Add(property.Name, FastProperty.GetOrCreate(property.PropertyInfo));
-                            }
-                        }
-
-                        foreach (PropertyInfo? navigationPropertyInfo in navigationPropertiesInfo)
-                        {
-                            if (navigationPropertyInfo != null)
-                            {
-                                entityPropertyDict.Add(navigationPropertyInfo.Name, FastProperty.GetOrCreate(navigationPropertyInfo));
-                            }
-                        }
-
-                        fastPropertyDicts.Add(entityType.Name, entityPropertyDict);
-                    }
-                    else
-                    {
-                        entityPropertyDict = fastPropertyDicts[entityType.Name];
-                    }
-
-                    if (bulkConfig.OnSaveChangesSetFk)
-                    {
-                        IEnumerable<INavigation> navigations = entityModelType.GetNavigations().Where(x => !x.IsCollection && !x.TargetEntityType.IsOwned());
-
-                        if (navigations.Any())
-                        {
-                            foreach (INavigation navigation in navigations)
-                            {
-                                // when FK entity was not modified it will not be in Dict, but also FK is auto set so no need here
-                                if (fastPropertyDicts.ContainsKey(navigation.ClrType.Name)) // otherwise set it:
-                                {
-                                    Dictionary<string, FastProperty> parentPropertyDict = fastPropertyDicts[navigation.ClrType.Name];
-
-                                    string? fkName = navigation.ForeignKey.Properties.Count > 0
-                                                     ? navigation.ForeignKey.Properties[0].Name
-                                                     : null;
-
-                                    string? pkName = navigation.ForeignKey.PrincipalKey.Properties.Count > 0
-                                                     ? navigation.ForeignKey.PrincipalKey.Properties[0].Name
-                                                     : null;
-
-                                    if (pkName is not null && fkName is not null)
-                                    {
-                                        foreach (object entity in entryGroup.Entities)
-                                        {
-                                            object? parentEntity = entityPropertyDict[navigation.Name].Get(entity);
-
-                                            if (parentEntity is not null)
-                                            {
-                                                object? pkValue = parentPropertyDict[pkName].Get(parentEntity);
-
-                                                if (pkValue is not null)
-                                                {
-                                                    entityPropertyDict[fkName].Set(entity, pkValue);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    string methodName = EntityStateBulkMethodDict[entryGroup.EntityState].Key;
-
-                    if (isAsync)
-                    {
-                        await InvokeBulkMethod(context, entryGroup.Entities, entityType, methodName, bulkConfig, progress, isAsync: true, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        InvokeBulkMethod(context, entryGroup.Entities, entityType, methodName, bulkConfig, progress, isAsync: false, cancellationToken).GetAwaiter().GetResult();
-                    }
-                }
-            }
-            else if (option == 2)
-            {
-                List<BulkMethodEntries> bulkMethodEntriesList = GetBulkMethodEntries(entries);
-
-                foreach (BulkMethodEntries bulkMethod in bulkMethodEntriesList)
-                {
-                    if (isAsync)
-                    {
-                        await InvokeBulkMethod(context, bulkMethod.Entries, bulkMethod.Type, bulkMethod.MethodName, bulkConfig, progress, isAsync: true, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        InvokeBulkMethod(context, bulkMethod.Entries, bulkMethod.Type, bulkMethod.MethodName, bulkConfig, progress, isAsync: false, cancellationToken).GetAwaiter().GetResult();
-                    }
-                }
+                Type entityType = PrepareGroupForSave(context, entryGroup.EntityType, entryGroup.Entities, bulkConfig, fastPropertyDicts);
+                string methodName = EntityStateBulkMethodDict[entryGroup.EntityState].Key;
+                InvokeBulkMethod(context, entryGroup.Entities, entityType, methodName, bulkConfig, progress);
             }
 
             if (doExplicitCommit)
@@ -200,49 +54,193 @@ internal static class DbContextBulkTransactionSaveChanges
         {
             if (doExplicitCommit)
             {
-                if (isAsync)
-                {
-                    await context.Database.CloseConnectionAsync().ConfigureAwait(false);
-                }
-                else
-                {
-                    context.Database.CloseConnection();
-                }
+                context.Database.CloseConnection();
             }
         }
     }
 
-    private static async Task InvokeBulkMethod(DbContext context, List<object> entities, Type entityType, string methodName, BulkConfig bulkConfig, Action<decimal>? progress, bool isAsync, CancellationToken cancellationToken)
+    public static async Task SaveChangesAsync(DbContext context, BulkConfig? bulkConfig, Action<decimal>? progress, CancellationToken cancellationToken)
     {
-        methodName += isAsync ? "Async" : "";
+        bulkConfig ??= new BulkConfig();
+        ConfigureSaveChanges(context, bulkConfig);
+
+        List<BulkEntryGroup> entryGroups = GetChangedEntryGroups(context);
+
+        if (entryGroups.Count == 0)
+        {
+            return;
+        }
+
+        await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        DbConnection connection = context.GetUnderlyingConnection(bulkConfig);
+        bool doExplicitCommit = context.Database.CurrentTransaction == null;
+
+        try
+        {
+            IDbContextTransaction transaction = context.Database.CurrentTransaction ?? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var fastPropertyDicts = new Dictionary<string, Dictionary<string, FastProperty>>();
+
+            foreach (BulkEntryGroup entryGroup in entryGroups)
+            {
+                Type entityType = PrepareGroupForSave(context, entryGroup.EntityType, entryGroup.Entities, bulkConfig, fastPropertyDicts);
+                string methodName = EntityStateBulkMethodDict[entryGroup.EntityState].Key;
+                await InvokeBulkMethodAsync(context, entryGroup.Entities, entityType, methodName, bulkConfig, progress, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (doExplicitCommit)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                context.ChangeTracker.AcceptAllChanges();
+            }
+        }
+        finally
+        {
+            if (doExplicitCommit)
+            {
+                await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static void ConfigureSaveChanges(DbContext context, BulkConfig bulkConfig)
+    {
+        DbContextBulkTransaction.CheckForMySqlUnsupportedFeatures(context, OperationType.SaveChanges, bulkConfig);
+
+        if (bulkConfig.OnSaveChangesSetFk && !bulkConfig.SetOutputIdentity)
+        {
+            bulkConfig.SetOutputIdentity = true;
+        }
+    }
+
+    private static List<BulkEntryGroup> GetChangedEntryGroups(DbContext context)
+    {
+        IEnumerable<EntityEntry> entries = context.ChangeTracker.Entries();
+        IEnumerable<BulkEntryGroup> entriesGroupedByEntity = entries.GroupBy(a => new { EntityType = a.Entity.GetType(), a.State },
+                                                                     (entry, group) => new BulkEntryGroup
+                                                                     {
+                                                                         EntityType = entry.EntityType,
+                                                                         EntityState = entry.State,
+                                                                         Entities = group.Select(a => a.Entity).ToList()
+                                                                     });
+        IEnumerable<BulkEntryGroup> entriesGroupedChanged = entriesGroupedByEntity.Where(a => EntityStateBulkMethodDict.ContainsKey(a.EntityState) & a.Entities.Count >= 0);
+        List<BulkEntryGroup> result = entriesGroupedChanged.OrderBy(a => a.EntityState.ToString() != EntityState.Modified.ToString()).ToList();
+
+        return result;
+    }
+
+    private static Type PrepareGroupForSave(DbContext context, Type rawEntityType, List<object> entities, BulkConfig bulkConfig, Dictionary<string, Dictionary<string, FastProperty>> fastPropertyDicts)
+    {
+        Type entityType = (rawEntityType.Namespace == "Castle.Proxies") ? rawEntityType.BaseType! : rawEntityType;
+        IEntityType entityModelType = context.Model.FindEntityType(entityType) ?? throw new ArgumentNullException($"Unable to determine EntityType from given type with name {entityType.Name}");
+
+        var entityPropertyDict = new Dictionary<string, FastProperty>();
+
+        if (!fastPropertyDicts.ContainsKey(entityType.Name))
+        {
+            IEnumerable<IProperty> properties = entityModelType.GetProperties();
+            IEnumerable<PropertyInfo?> navigationPropertiesInfo = entityModelType.GetNavigations().Select(x => x.PropertyInfo);
+
+            foreach (IProperty property in properties)
+            {
+                if (property.PropertyInfo != null)
+                {
+                    entityPropertyDict.Add(property.Name, FastProperty.GetOrCreate(property.PropertyInfo));
+                }
+            }
+
+            foreach (PropertyInfo? navigationPropertyInfo in navigationPropertiesInfo)
+            {
+                if (navigationPropertyInfo != null)
+                {
+                    entityPropertyDict.Add(navigationPropertyInfo.Name, FastProperty.GetOrCreate(navigationPropertyInfo));
+                }
+            }
+
+            fastPropertyDicts.Add(entityType.Name, entityPropertyDict);
+        }
+        else
+        {
+            entityPropertyDict = fastPropertyDicts[entityType.Name];
+        }
+
+        if (bulkConfig.OnSaveChangesSetFk)
+        {
+            IEnumerable<INavigation> navigations = entityModelType.GetNavigations().Where(x => !x.IsCollection && !x.TargetEntityType.IsOwned());
+
+            if (navigations.Any())
+            {
+                foreach (INavigation navigation in navigations)
+                {
+                    if (fastPropertyDicts.ContainsKey(navigation.ClrType.Name))
+                    {
+                        Dictionary<string, FastProperty> parentPropertyDict = fastPropertyDicts[navigation.ClrType.Name];
+
+                        string? fkName = navigation.ForeignKey.Properties.Count > 0
+                                         ? navigation.ForeignKey.Properties[0].Name
+                                         : null;
+
+                        string? pkName = navigation.ForeignKey.PrincipalKey.Properties.Count > 0
+                                         ? navigation.ForeignKey.PrincipalKey.Properties[0].Name
+                                         : null;
+
+                        if (pkName is not null && fkName is not null)
+                        {
+                            foreach (object entity in entities)
+                            {
+                                object? parentEntity = entityPropertyDict[navigation.Name].Get(entity);
+
+                                if (parentEntity is not null)
+                                {
+                                    object? pkValue = parentPropertyDict[pkName].Get(parentEntity);
+
+                                    if (pkValue is not null)
+                                    {
+                                        entityPropertyDict[fkName].Set(entity, pkValue);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return entityType;
+    }
+
+    private static void InvokeBulkMethod(DbContext context, List<object> entities, Type entityType, string methodName, BulkConfig bulkConfig, Action<decimal>? progress)
+    {
         MethodInfo? bulkMethod = typeof(DbContextBulkOperations)
                                  .GetMethods()
                                  .Where(a => a.Name == methodName)
                                  .FirstOrDefault();
 
         bulkMethod = bulkMethod?.MakeGenericMethod(typeof(object));
+        var arguments = new List<object?> { context, entities, bulkConfig, progress, entityType };
+        object?[] methodArguments = arguments.ToArray();
+        bulkMethod?.Invoke(null, methodArguments);
+    }
 
+    private static async Task InvokeBulkMethodAsync(DbContext context, List<object> entities, Type entityType, string methodName, BulkConfig bulkConfig, Action<decimal>? progress, CancellationToken cancellationToken)
+    {
+        string asyncMethodName = methodName + "Async";
+        MethodInfo? bulkMethod = typeof(DbContextBulkOperations)
+                                 .GetMethods()
+                                 .Where(a => a.Name == asyncMethodName)
+                                 .FirstOrDefault();
+
+        bulkMethod = bulkMethod?.MakeGenericMethod(typeof(object));
         var arguments = new List<object?> { context, entities, bulkConfig, progress, entityType, cancellationToken };
+        object?[] methodArguments = arguments.ToArray();
 
-        if (isAsync)
+        if (bulkMethod is not null)
         {
-            object?[] methodArguments = arguments.ToArray();
+            Task? task = (Task?)bulkMethod.Invoke(null, methodArguments);
 
-            if (bulkMethod is not null)
+            if (task != null)
             {
-                Task? task = (Task?)bulkMethod.Invoke(null, methodArguments);
-
-                if (task != null)
-                {
-                    await task.ConfigureAwait(false);
-                }
+                await task.ConfigureAwait(false);
             }
-        }
-        else
-        {
-            arguments.RemoveAt(arguments.Count - 1); // removes cancellationToken
-            object?[] methodArguments = arguments.ToArray();
-            bulkMethod?.Invoke(null, methodArguments);
         }
     }
 

@@ -381,16 +381,16 @@ public sealed class SqlQueryBuilderPostgreSql : QueryBuilderExtensions
         foreach (object parameter in sqlParameters)
         {
             DbParameter dbParam = (DbParameter)parameter;
-            dynamic npgsqlParameter = CreateParameter(dbParam);
+            Npgsql.NpgsqlParameter npgsqlParameter = (Npgsql.NpgsqlParameter)CreateParameter(dbParam);
 
             if (!isDelete && entityType is not null)
             {
-                string parameterName = ((string)npgsqlParameter.ParameterName).Replace("@", string.Empty);
+                string parameterName = npgsqlParameter.ParameterName.Replace("@", string.Empty);
                 Type? propertyType = entityType.GetProperties().SingleOrDefault(a => a.Name == parameterName)?.PropertyType;
 
                 if (propertyType == typeof(System.Text.Json.JsonElement) || propertyType == typeof(System.Text.Json.JsonElement?))
                 {
-                    npgsqlParameter.NpgsqlDbType = Dbtype();
+                    npgsqlParameter.NpgsqlDbType = (NpgsqlTypes.NpgsqlDbType)Dbtype();
                 }
             }
 
