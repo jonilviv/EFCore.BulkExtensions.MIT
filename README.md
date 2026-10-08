@@ -110,13 +110,13 @@ Measured against **1,000,000 synthetic records** dataset. Full per-second and th
 | Database | Mode | Records | │ | Classic Insert | Bulk Insert | Speedup | │ | Classic Update | Bulk Update | Speedup | │ | Classic Delete | Bulk Delete | Speedup | │ | Overall Speedup |
 | :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- | :--- | :--- | :-: | :--- |
 | **SQLite** | Sync | 1,000,000 | │ | 20.0s | 3.9s | **5.1x** | │ | 26.7s | 4.7s | **5.7x** | │ | 15.1s | 1.6s | **9.3x** | │ | **5.8x** |
-| **SQLite** | Async | 1,000,000 | │ | 20.1s | 3.4s | **6.0x** | │ | 22.8s | 3.9s | **5.8x** | │ | 13.8s | 1.3s | **10.6x** | │ | **6.5x** |
+| | Async | 1,000,000 | │ | 20.1s | 3.4s | **6.0x** | │ | 22.8s | 3.9s | **5.8x** | │ | 13.8s | 1.3s | **10.6x** | │ | **6.5x** |
 | **PostgreSQL** | Sync | 1,000,000 | │ | 34.4s | 11.3s | **3.0x** | │ | 44.2s | 15.3s | **2.9x** | │ | 27.6s | 8.9s | **3.1x** | │ | **3.0x** |
-| **PostgreSQL** | Async | 1,000,000 | │ | 35.2s | 12.1s | **2.9x** | │ | 45.1s | 16.0s | **2.8x** | │ | 28.1s | 9.4s | **3.0x** | │ | **2.9x** |
+| | Async | 1,000,000 | │ | 35.2s | 12.1s | **2.9x** | │ | 45.1s | 16.0s | **2.8x** | │ | 28.1s | 9.4s | **3.0x** | │ | **2.9x** |
 | **MySQL** | Sync | 1,000,000 | │ | 63.5s | 10.4s | **6.1x** | │ | 144.3s | 21.3s | **6.8x** | │ | 74.8s | 11.5s | **6.5x** | │ | **6.5x** |
-| **MySQL** | Async | 1,000,000 | │ | 50.9s | 7.3s | **7.0x** | │ | 127.5s | 16.0s | **7.9x** | │ | 62.1s | 8.6s | **7.2x** | │ | **7.5x** |
+| | Async | 1,000,000 | │ | 50.9s | 7.3s | **7.0x** | │ | 127.5s | 16.0s | **7.9x** | │ | 62.1s | 8.6s | **7.2x** | │ | **7.5x** |
 | **SQL Server** | Sync | 1,000,000 | │ | 81.1s | 14.9s | **5.4x** | │ | 104.5s | 19.7s | **5.3x** | │ | 64.5s | 12.4s | **5.2x** | │ | **5.3x** |
-| **SQL Server** | Async | 1,000,000 | │ | 83.8s | 15.5s | **5.4x** | │ | 103.3s | 19.3s | **5.4x** | │ | 66.2s | 12.8s | **5.2x** | │ | **5.3x** |
+| | Async | 1,000,000 | │ | 83.8s | 15.5s | **5.4x** | │ | 103.3s | 19.3s | **5.4x** | │ | 66.2s | 12.8s | **5.2x** | │ | **5.3x** |
 
 For small data sets there is an overhead since most Bulk ops need to create Temp table and also Drop it after finish.<br>
 Probably good advice would be to use **Bulk ops for sets greater than 1000**.
